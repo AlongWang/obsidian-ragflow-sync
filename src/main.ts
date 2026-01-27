@@ -1,72 +1,36 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, MyPluginSettings, SampleSettingTab} from "./settings";
+import {App, FileSystemAdapter, Notice, Plugin, TAbstractFile, TFile} from 'obsidian';
+import {DEFAULT_SETTINGS, RagFlowSyncPluginSettings, RagFlowSyncPluginSettingTab} from "./settings";
+import {createRagflowApi, KnowledgeBaseFile, RagflowApi} from "./ragflowApi";
 
 // Remember to rename these classes and interfaces!
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class RagFlowSyncPlugin extends Plugin {
+	settings: RagFlowSyncPluginSettings;
+	private datasetId?: string;
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
+		// Settings tab
+		this.addSettingTab(new RagFlowSyncPluginSettingTab(this.app, this));
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
+		// Register file sync after layout is ready to avoid a one-time sync on startup
+		this.app.workspace.onLayoutReady(() => {
+			const syncHandler = async (file: TAbstractFile) => {
+				if (!(file instanceof TFile)) return;
+				if (file.extension.toLowerCase() !== "md") return;
+				try {
+					await this.syncNote(file);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					this.logError(`Sync failed for ${file.path}`, error);
+					new Notice(`Ragflow sync failed: ${message}`);
 				}
-				return false;
-			}
+			};
+
+			this.registerEvent(this.app.vault.on('create', syncHandler));
+			this.registerEvent(this.app.vault.on('modify', syncHandler));
 		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
 
 	}
 
@@ -74,26 +38,82 @@ export default class MyPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MyPluginSettings>);
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<RagFlowSyncPluginSettings>);
+		this.datasetId = undefined;
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
+		this.datasetId = undefined;
 	}
 
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
+	private logError(context: string, error: unknown) {
+		console.error(`[Ragflow] ${context}`, error);
 	}
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
+	private async ensureApi(): Promise<RagflowApi> {
+		const {baseUrl, apiKey, vaultName} = this.settings;
+		if (!baseUrl?.trim() || !apiKey?.trim() || !vaultName?.trim()) {
+			throw new Error("Please configure Ragflow base URL, API key, and vault name in settings");
+		}
+		return createRagflowApi(this.settings);
+	}
+
+	private async ensureDatasetId(): Promise<string> {
+		if (this.datasetId) return this.datasetId;
+		const api = await this.ensureApi();
+		const list = await api.listKnowledgeBases();
+		const existing = list.find(kb => kb.name === this.settings.vaultName);
+		if (existing?.id) {
+			this.datasetId = existing.id;
+			return existing.id;
+		}
+		const created = await api.createKnowledgeBase({name: this.settings.vaultName});
+		if (!created?.id) throw new Error("Failed to create Ragflow knowledge base");
+		this.datasetId = created.id;
+		return created.id;
+	}
+
+	private resolveAbsolutePath(file: TFile): string {
+		const adapter = this.app.vault.adapter;
+		if (adapter instanceof FileSystemAdapter) {
+			return adapter.getFullPath(file.path);
+		}
+		throw new Error("Cannot resolve absolute path for this vault adapter");
+	}
+
+	private async readFileBinary(file: TFile): Promise<ArrayBuffer> {
+		const adapter = this.app.vault.adapter;
+		if (adapter instanceof FileSystemAdapter) {
+			return adapter.readBinary(file.path);
+		}
+		throw new Error("Cannot read file data for this vault adapter");
+	}
+
+	private buildUploadName(file: TFile): string {
+		const parts = file.path.split("/");
+		const baseName = parts.pop() ?? file.name;
+		const prefix = parts.filter(Boolean).join("-");
+		return prefix ? `${prefix}-${baseName}` : baseName;
+	}
+
+	private async syncNote(file: TFile): Promise<void> {
+		const datasetId = await this.ensureDatasetId();
+		const api = await this.ensureApi();
+		const relativePath = file.path;
+		const uploadName = this.buildUploadName(file);
+		const binary = await this.readFileBinary(file);
+		const mimeType = file.extension.toLowerCase() === "md" ? "text/markdown" : "application/octet-stream";
+		// Remove existing document with the same location or name
+		const docs = await api.listFiles(datasetId);
+		const existing = docs.find((doc: KnowledgeBaseFile) => doc.location === relativePath || doc.name === uploadName);
+		if (existing?.id) {
+			await api.deleteFile(datasetId, existing.id);
+		}
+
+		console.info(`Uploading data: ${uploadName} , ${mimeType},  ${binary}`);
+		await api.uploadFile(datasetId, {fileName: uploadName, data: binary, mimeType});
+
+		new Notice(`Synced to Ragflow: ${relativePath}`);
 	}
 }
