@@ -75,7 +75,11 @@ export class RagflowApi {
 	async getKnowledgeBase(id: string): Promise<KnowledgeBase> {
 		const data = await this.request<KnowledgeBase[] | KnowledgeBase>("GET", `/api/v1/datasets`, {id});
 		if (Array.isArray(data) && data.length > 0) {
-			return data[0];
+			const kb = data[0];
+			if (!kb) {
+				throw new Error("Knowledge base not found");
+			}
+			return kb;
 		}
 		if (!Array.isArray(data) && data) {
 			return data as KnowledgeBase;
@@ -143,7 +147,13 @@ export class RagflowApi {
 		return new TextEncoder().encode(response.text ?? "").buffer;
 	}
 
-	private async request<T>(method: HttpMethod, path: string, queryOrBody?: Record<string, unknown>, rawBody?: BodyInit | null, contentTypeOverride?: string): Promise<T> {
+	private async request<T>(
+		method: HttpMethod,
+		path: string,
+		queryOrBody?: KnowledgeBaseInput | Partial<KnowledgeBaseInput> | UpdateFilePayload | Record<string, unknown>,
+		rawBody?: string | ArrayBuffer | null,
+		contentTypeOverride?: string
+	): Promise<T> {
 		if (!this.baseUrl) {
 			throw new Error("Ragflow base URL is not configured");
 		}
@@ -153,8 +163,8 @@ export class RagflowApi {
 
 		const url = new URL(`${this.baseUrl}${path.startsWith("/") ? "" : "/"}${path}`);
 		const isGet = method === "GET";
-		if (isGet && queryOrBody) {
-			Object.entries(queryOrBody).forEach(([key, value]) => {
+		if (isGet && queryOrBody && typeof queryOrBody === "object") {
+			Object.entries(queryOrBody as Record<string, unknown>).forEach(([key, value]) => {
 				if (value === undefined || value === null) return;
 				url.searchParams.append(key, String(value));
 			});
@@ -174,7 +184,7 @@ export class RagflowApi {
 			headers["X-Ragflow-Vault"] = this.vaultName;
 		}
 
-		const body = isGet
+		const body: string | ArrayBuffer | undefined = isGet
 			? undefined
 			: (rawBody ?? (queryOrBody ? JSON.stringify(queryOrBody) : undefined));
 
@@ -185,12 +195,8 @@ export class RagflowApi {
 		}
 
 		let bodyPreview: unknown = body;
-		if (body instanceof FormData) {
-			bodyPreview = "[FormData]";
-		} else if (body instanceof ArrayBuffer) {
+		if (body instanceof ArrayBuffer) {
 			bodyPreview = `[ArrayBuffer length=${body.byteLength}]`;
-		} else if (ArrayBuffer.isView(body)) {
-			bodyPreview = `[${body.constructor.name} length=${body.byteLength}]`;
 		}
 
 		console.info("Ragflow request", {method, url: url.toString(), headers: loggedHeaders, body: bodyPreview});
@@ -235,8 +241,15 @@ export class RagflowApi {
 		if (file.data instanceof ArrayBuffer) return new Blob([file.data], {type: mimeType});
 		if (ArrayBuffer.isView(file.data)) {
 			const view = file.data;
-			const sliced = view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
-			return new Blob([sliced], {type: mimeType});
+			// Ensure we always pass an ArrayBuffer (SharedArrayBuffer is not a valid BlobPart)
+			const buffer = view.buffer instanceof ArrayBuffer
+				? view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength)
+				: (() => {
+					const copy = new Uint8Array(view.byteLength);
+					copy.set(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+					return copy.buffer;
+				})();
+			return new Blob([buffer], {type: mimeType});
 		}
 		throw new Error("Unsupported upload payload");
 	}
