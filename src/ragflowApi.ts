@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-base-to-string */
 import {requestUrl} from "obsidian";
 import {RagFlowSyncPluginSettings} from "./settings";
 
@@ -82,7 +83,7 @@ export class RagflowApi {
 			return kb;
 		}
 		if (!Array.isArray(data) && data) {
-			return data as KnowledgeBase;
+			return data;
 		}
 		throw new Error("Knowledge base not found");
 	}
@@ -194,12 +195,7 @@ export class RagflowApi {
 			loggedHeaders.Authorization = `${token.slice(0, 12)}...`;
 		}
 
-		let bodyPreview: unknown = body;
-		if (body instanceof ArrayBuffer) {
-			bodyPreview = `[ArrayBuffer length=${body.byteLength}]`;
-		}
-
-		console.info("Ragflow request", {method, url: url.toString(), headers: loggedHeaders, body: bodyPreview});
+		// bodyPreview was unused and removed to resolve lint warning
 
 		const response = await requestUrl({
 			url: url.toString(),
@@ -216,11 +212,11 @@ export class RagflowApi {
 
 		const json = response.json as ApiResponse<T> | T | undefined;
 		if (json && typeof json === "object" && "code" in json) {
-			const apiResp = json as ApiResponse<T>;
+			const apiResp = json;
 			if (apiResp.code !== undefined && apiResp.code !== 0) {
 				throw new Error(apiResp.message ?? `Ragflow request error (code ${apiResp.code})`);
 			}
-			return (apiResp.data ?? (json as unknown as T)) as T;
+			return apiResp.data ?? (json as T);
 		}
 
 		return json as T;

@@ -34,14 +34,14 @@ export class RagFlowSyncPluginSettingTab extends PluginSettingTab {
 
 		containerEl.empty();
 
-		const ragflowSettingRow = new Setting(containerEl)
-			.setName('Ragflow Settings').setHeading();
+		new Setting(containerEl)
+			.setName('Ragflow configurations').setHeading();
 
 		new Setting(containerEl)
 			.setName('Ragflow base URL (required)')
-			.setDesc('Base endpoint for the Ragflow service, e.g. https://your-ragflow-host')
+			.setDesc('Base endpoint for the ragflow service, e.g. https://your-ragflow-host')
 			.addText(text => text
-				.setPlaceholder('https://your-ragflow-host')
+				.setPlaceholder('Ragflow URL')
 				.setValue(this.plugin.settings.baseUrl)
 				.onChange(async (value) => {
 					this.plugin.settings.baseUrl = value;
@@ -51,7 +51,7 @@ export class RagFlowSyncPluginSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('API key (required)')
-			.setDesc('API key used to authenticate with Ragflow')
+			.setDesc('API key used to authenticate with ragflow')
 			.addText(text => {
 				text.inputEl.type = "password"; // SecretComponent-style: mask input to keep API key private in UI
 				text
@@ -66,9 +66,9 @@ export class RagFlowSyncPluginSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Vault name')
-			.setDesc('Optional identifier for the Obsidian vault to send to Ragflow')
+			.setDesc('Optional identifier for the Obsidian vault to send to ragflow')
 			.addText(text => text
-				.setPlaceholder('My Vault')
+				.setPlaceholder('My vault')
 				.setValue(this.plugin.settings.vaultName)
 				.onChange(async (value) => {
 					this.plugin.settings.vaultName = value;

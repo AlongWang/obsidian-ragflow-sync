@@ -1,11 +1,11 @@
-import {App, FileSystemAdapter, Notice, Plugin, TAbstractFile, TFile} from 'obsidian';
+import {FileSystemAdapter, Notice, Plugin, TAbstractFile, TFile} from 'obsidian';
 import {DEFAULT_SETTINGS, RagFlowSyncPluginSettings, RagFlowSyncPluginSettingTab} from "./settings";
 import {createRagflowApi, KnowledgeBaseFile, RagflowApi} from "./ragflowApi";
 
 // Remember to rename these classes and interfaces!
 
 export default class RagFlowSyncPlugin extends Plugin {
-	settings: RagFlowSyncPluginSettings;
+	settings: RagFlowSyncPluginSettings
 	private datasetId?: string;
 
 	async onload() {
@@ -111,7 +111,7 @@ export default class RagFlowSyncPlugin extends Plugin {
 			await api.deleteFile(datasetId, existing.id);
 		}
 
-		console.info(`Uploading data: ${uploadName} , ${mimeType},  ${binary}`);
+		
 		await api.uploadFile(datasetId, {fileName: uploadName, data: binary, mimeType});
 
 		new Notice(`Synced to Ragflow: ${relativePath}`);
